@@ -248,8 +248,8 @@ body.app-locked .shell{pointer-events:none;user-select:none;}
     <h2>WINTER ARC 2026</h2>
     <p>Sign in with Google to access your dashboard. Your account name becomes your WINTER ARC user name, and your progress is synced to your private cloud data.</p>
     <div class="auth-gate-user" id="authGateUser"><span id="authGateUserName"></span></div>
-    <button id="authGateGoogleBtn" class="btn google-btn" onclick="googleSignIn()">Continue with Google</button>
-    <div id="authGateStatus" class="auth-gate-status">Checking sign-in…</div>
+    <button type="button" id="authGateGoogleBtn" class="btn google-btn" onclick="googleSignIn()">Continue with Google</button>
+    <div id="authGateStatus" class="auth-gate-status">Google login ready.</div>
   </div>
 </div>
 <div class="shell">
@@ -487,8 +487,8 @@ function toast(message){
 }
 
 // FIREBASE / GOOGLE AUTH / CLOUD FIRESTORE
-// Project: winter-arc-b85d7
-// The client config below is intended for this public web app. Access control is enforced by Firestore Security Rules.
+// Public web config for the WINTER ARC 2026 Firebase project.
+// IMPORTANT: data protection comes from Firebase Authentication + Firestore Security Rules.
 const FIREBASE_CONFIG={
   apiKey:'AIzaSyAK7X8C7Z6cAB-5R0VUrBbbCSyMSsOtZAI',
   authDomain:'winter-arc-b85d7.firebaseapp.com',
@@ -498,10 +498,17 @@ const FIREBASE_CONFIG={
   appId:'1:118770681483:web:3b34da996f344b4ec8f68e',
   measurementId:'G-CHYXMK8VV4'
 };
-const FIREBASE_READY=['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'].every(k=>{const v=FIREBASE_CONFIG[k];return typeof v==='string'&&v.trim()&&!v.startsWith('PASTE_YOUR_');});
+const EXPECTED_FIREBASE_PROJECT='winter-arc-b85d7';
+const AUTH_HOSTS=new Set(['rahatahemad001.github.io','localhost','127.0.0.1']);
+const FIREBASE_READY=['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'].every(k=>{const v=FIREBASE_CONFIG[k];return typeof v==='string'&&v.trim()&&!v.startsWith('PASTE_YOUR_');})
+  && FIREBASE_CONFIG.projectId===EXPECTED_FIREBASE_PROJECT;
 let firebaseApp=null,auth=null,db=null,authUser=null,cloudBusy=false,cloudHydrating=false,cloudTimer=null;
+function isAllowedAuthHost(){
+  const host=(location.hostname||'').toLowerCase();
+  return AUTH_HOSTS.has(host) || host.endsWith('.github.io');
+}
 function firebaseInit(){
-  if(!FIREBASE_READY){console.warn('WINTER ARC: Firebase config is incomplete.');return false;}
+  if(!FIREBASE_READY){console.warn('WINTER ARC: Firebase config is incomplete or project does not match the expected WINTER ARC project.');return false;}
   if(!window.firebase){console.warn('WINTER ARC: Firebase SDK did not load.');return false;}
   if(auth&&db)return true;
   try{
@@ -550,7 +557,7 @@ function firebaseInit(){
   }
 }
 function cloudRef(){return db.collection('users').doc(authUser.uid).collection('winterArc').doc('state');}
-function cloudPayload(){const state=safeClone(S);return {state,updatedAt:Date.now(),appVersion:'WINTER ARC 2026'};}
+function cloudPayload(){const state=safeClone(S);return {state,updatedAt:Date.now(),appVersion:'WINTER ARC 2026',ownerUid:authUser?.uid||null};}
 async function handleCloudSignIn(){
   if(!db)return; cloudBusy=true;updateAuthUI();
   try{
@@ -565,60 +572,71 @@ async function handleCloudSignIn(){
   finally{cloudBusy=false;updateAuthUI();}
 }
 async function googleSignIn(){
+  const status=document.getElementById('authGateStatus');
+  const setStatus=(msg)=>{if(status)status.textContent=msg;};
   if(!isWebAuthEnvironment()){
-    toast('Open WINTER ARC 2026 on GitHub Pages.');
+    setStatus('Open WINTER ARC 2026 from the live GitHub Pages website.');
     return;
   }
   if(!FIREBASE_READY){
-    toast('Firebase config is missing.');
-    showView('settings');
+    setStatus('Firebase configuration is missing or does not match the WINTER ARC project.');
     return;
   }
   if(!firebaseInit()){
-    toast('Firebase could not start. Refresh the page and try again.');
+    setStatus('Firebase SDK could not start. Check the browser console.');
     return;
   }
+  const host=(location.hostname||'').toLowerCase();
+  if(!isAllowedAuthHost()){
+    setStatus('This website is not approved for Google Login. Add '+host+' in Firebase → Authentication → Settings → Authorized domains.');
+    return;
+  }
+  const provider=new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({prompt:'select_account'});
+  setStatus('Opening Google Login…');
   try{
-    const provider=new firebase.auth.GoogleAuthProvider();
-    provider.setCustomParameters({prompt:'select_account'});
     await auth.signInWithPopup(provider);
   }catch(e){
-    const code=e?.code||'';
+    const code=e?.code||'unknown';
+    const message=e?.message||'Unknown authentication error.';
     console.error('WINTER ARC Google sign-in error:',e);
 
     if(code==='auth/unauthorized-domain'){
-      toast('Firebase blocked this website. Add '+location.hostname+' to Authorized domains.');
+      setStatus('Unauthorized domain. Add '+host+' in Firebase → Authentication → Settings → Authorized domains.');
       return;
     }
     if(code==='auth/operation-not-allowed'){
-      toast('Google Sign-In is disabled in Firebase. Enable Google provider.');
+      setStatus('Google Sign-In is disabled. Enable Google in Firebase → Authentication → Sign-in method.');
       return;
     }
     if(code==='auth/invalid-api-key'){
-      toast('Firebase API key is invalid. Check your Web App config.');
+      setStatus('Invalid Firebase API key. Re-copy the Web App config from this Firebase project.');
       return;
     }
     if(code==='auth/network-request-failed'){
-      toast('Network error. Check your internet connection.');
+      setStatus('Network error. Check your internet connection and try again.');
       return;
     }
     if(code==='auth/web-storage-unsupported'){
-      toast('Browser storage is blocked. Allow site data for this GitHub Pages site.');
+      setStatus('Browser storage is blocked. Allow cookies/site data for this website and try again.');
       return;
     }
     if(code==='auth/popup-blocked' || code==='auth/operation-not-supported-in-this-environment'){
       try{
-        toast('Popup blocked. Opening Google Login directly…');
+        setStatus('Opening Google Login directly…');
         await auth.signInWithRedirect(provider);
         return;
       }catch(re){
         console.error('WINTER ARC Google redirect fallback failed:',re);
-        toast('Google Login could not open. Allow pop-ups/site data and try again.');
+        setStatus('Google Login could not open. Check Authorized Domains and browser site-data settings.');
         return;
       }
     }
-    if(code==='auth/popup-closed-by-user')return;
-    toast('Google sign-in failed. Refresh and try again.');
+    if(code==='auth/popup-closed-by-user' || code==='auth/cancelled-popup-request'){
+      setStatus('Google Login was closed. Click the button to try again.');
+      return;
+    }
+    setStatus('Firebase error: '+code+' — '+message);
   }
 }
 async function googleSignOut(){if(!auth)return;try{await auth.signOut();setAppLocked(true,'Signed out. Sign in with Google to continue.');toast('Signed out. Sign in again to use WINTER ARC 2026.');}catch(e){toast('Could not sign out.');}}
@@ -641,7 +659,7 @@ async function testCloudDatabase(){
     toast('Firestore connection works ✓');
   }catch(e){
     console.error('WINTER ARC Firestore test failed',e);
-    const msg=e?.code==='permission-denied'?'Firestore rules are blocking access.':'Firestore test failed.';
+    const msg=e?.code==='permission-denied'?'Firestore rules are blocking access.':e?.code==='unauthenticated'?'Google sign-in expired. Sign in again.':'Firestore test failed.';
     toast(msg+' Local data is safe.');
   }finally{cloudBusy=false;updateAuthUI();}
 }
@@ -743,7 +761,7 @@ function setAppLocked(locked,message){
   if(gate)gate.classList.toggle('hidden',!locked);
   if(status){
     if(message) status.textContent=message;
-    else if(!isWebAuthEnvironment()) status.textContent='Open this app on GitHub Pages or localhost to sign in.';
+    else if(!isWebAuthEnvironment()) status.textContent='Open this app from the live website (HTTP/HTTPS) to sign in.';
     else if(!FIREBASE_READY) status.textContent='Firebase configuration is not ready.';
     else if(locked) status.textContent='Google sign-in is required to continue.';
     else status.textContent='Signed in.';
@@ -762,7 +780,7 @@ function updateAuthUI(){
   setAppLocked(!authUser);
   const status=$('#cloudStatus');
   if(status){
-    const label=!FIREBASE_READY?'Setup required':!isWebAuthEnvironment()?'Open on GitHub Pages':authUser?(cloudBusy?'Syncing…':'Synced'):'Google login ready';
+    const label=!FIREBASE_READY?'Firebase setup required':!isWebAuthEnvironment()?'Open the live website':authUser?(cloudBusy?'Syncing…':'Synced'):'Google login ready';
     status.textContent=label;
     status.className='cloud-status '+(authUser?'ok':'');
   }
@@ -779,7 +797,7 @@ function updateAuthUI(){
   if(signIn){
     signIn.style.display=authUser?'none':'inline-flex';
     signIn.disabled=!isWebAuthEnvironment()||!FIREBASE_READY;
-    signIn.title=!isWebAuthEnvironment()?'Open WINTER ARC 2026 from GitHub Pages or localhost to use Google sign-in':'';
+    signIn.title=!isWebAuthEnvironment()?'Open WINTER ARC 2026 through the live HTTP/HTTPS website':'';
   }
   if(sync)sync.style.display=authUser?'inline-flex':'none';
   if(signOut)signOut.style.display=authUser?'inline-flex':'none';
@@ -1089,7 +1107,7 @@ function settingsView(){
       </div>
     </div>
     <div class="cloud-actions">
-       <div class="cloud-status" style="flex-basis:100%;">Google Login works on the live GitHub Pages site.</div>
+       <div class="cloud-status" style="flex-basis:100%;">Google sign-in required • private user data</div>
       <button id="googleSignInBtn" class="btn google-btn" onclick="googleSignIn()">Continue with Google</button>
       <button id="cloudSyncBtn" class="btn outline" onclick="pushCloud(true)" style="display:none">Sync Now</button>
       <button id="googleSignOutBtn" class="btn outline" onclick="googleSignOut()" style="display:none">Sign Out</button>
@@ -1192,7 +1210,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter' && document.activeElement?.id==='exName'){e.preventDefault();addEx();}
   if(e.key==='Enter' && document.activeElement?.id==='weatherLocationInput'){e.preventDefault();searchWeatherLocation();}
 });
-window.addEventListener('beforeunload',()=>{try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}});
+window.addEventListener('beforeunload',()=>{if(!authUser)return;try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}});
 
 setAppLocked(true,'Checking Google sign-in…');
 firebaseInit();
